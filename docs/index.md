@@ -37,7 +37,7 @@ Use this documentation to get started, explore examples, and understand how to a
     - **Real-world** – deployment workflows and hardware experiment examples.
 - **Concepts (wip)** – planned for the future; will provide deeper explanations of core ideas behind PACE.
 - **API reference (wip)** – structured overview of the public Python API.
-- **Development (wip)** – contribution guidelines and information for developers. 
+- **Development (wip)** – contribution guidelines and information for developers.
 -->
 
 Additional sections such as Concepts, API Reference, and Development are planned and will be added as the PACE framework evolves.
@@ -45,7 +45,7 @@ Additional sections such as Concepts, API Reference, and Development are planned
 
 If you use **PACE** in your research, please cite our [paper](https://doi.org/10.1177/02783649261459628) published in **The International Journal of Robotics Research (IJRR)**. An open-access version is available on [arXiv](https://arxiv.org/abs/2509.06342).
 
-> F. Bjelonic, F. Tischhauser, and M. Hutter,  
+> F. Bjelonic, F. Tischhauser, and M. Hutter,
 > _Towards Bridging the Gap: Systematic Sim-to-Real Transfer for Diverse Legged Robots_, The International Journal of Robotics Research, 2026. [doi:10.1177/02783649261459628](https://doi.org/10.1177/02783649261459628)
 
 ```bibtex

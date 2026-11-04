@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+import torch
 from isaaclab.actuators import DCMotor
-from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils import DelayBuffer
+from isaaclab.utils.types import ArticulationActions
+
 if TYPE_CHECKING:
     # only for type checking
     from .pace_actuator_cfg import PaceDCMotorCfg
@@ -46,7 +47,9 @@ class PaceDCMotor(DCMotor):
             raise ValueError(f"delay_mode must be 'command' or 'effort', but got '{cfg.delay_mode}'.")
         # one buffer for the torque ("effort") or one per command signal ("command")
         buffer_names = ("effort",) if cfg.delay_mode == "effort" else ("position", "velocity", "effort")
-        self.delay_buffers = {name: DelayBuffer(cfg.max_delay + 1, self._num_envs, device=self._device) for name in buffer_names}
+        self.delay_buffers = {
+            name: DelayBuffer(cfg.max_delay + 1, self._num_envs, device=self._device) for name in buffer_names
+        }
         for buffer in self.delay_buffers.values():
             buffer.set_time_lag(cfg.max_delay, torch.arange(self._num_envs, device=self._device))
 

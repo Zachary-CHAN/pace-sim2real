@@ -37,7 +37,7 @@ nav:
       - Installation: installation.md
       - Importing: importing.md
       - Basic usage: usage.md
-  - Examples: 
+  - Examples:
       - Overview: examples/index.md
       - ANYmal: examples/anymal.md
   - Guides:
@@ -89,4 +89,3 @@ plugins:
   #       python:
   #         paths:
   #           - source/pace_sim2real
-

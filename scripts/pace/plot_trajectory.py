@@ -2,12 +2,12 @@
 # Author: Filip Bjelonic
 # Licensed under the Apache License 2.0
 
-import torch
-import matplotlib.pyplot as plt
+import argparse
 import re
 from pathlib import Path
 
-import argparse
+import matplotlib.pyplot as plt
+import torch
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Pace agent for Isaac Lab environments.")
@@ -87,10 +87,10 @@ print(f"Static/dynamic friction params: {mean[2 * len(joint_order):3 * len(joint
 print(f"Encoder bias params: {mean[3 * len(joint_order):4 * len(joint_order)]}")
 print(f"Delay param: {mean[4 * len(joint_order)].item()}")
 if config.get("separate_dynamic_friction", False):
-    friction_ratio = mean[4 * len(joint_order) + 1:5 * len(joint_order) + 1]
+    friction_ratio = mean[4 * len(joint_order) + 1 : 5 * len(joint_order) + 1]
     print(f"Dynamic/static friction ratio params: {friction_ratio}")
     print(f"Dynamic friction: {mean[2 * len(joint_order):3 * len(joint_order)] * friction_ratio}")
-encoder_bias = mean[3 * len(joint_order):4 * len(joint_order)]  # extract encoder bias
+encoder_bias = mean[3 * len(joint_order) : 4 * len(joint_order)]  # extract encoder bias
 
 if plot_score:
     try:
@@ -106,7 +106,7 @@ if plot_score:
     plt.title("CMA-ES Score over Iterations")
     plt.xlabel("Iteration")
     plt.ylabel("Score")
-    data = torch.min(progress["scores_buffer"][:params_num + 1], dim=1).values.cpu().numpy()
+    data = torch.min(progress["scores_buffer"][: params_num + 1], dim=1).values.cpu().numpy()
     plt.semilogy(data)
     plt.xlim(0, params_num)
     # plt.ylim(0, None)
@@ -116,7 +116,9 @@ if plot_score:
 if plot_trajectory:
     for i in range(len(joint_order)):
         plt.figure(figsize=(8, 4.5))
-        plt.plot(time, trajectories[:, i].cpu().numpy() - encoder_bias[i].item(), c="tab:orange", label="Sim", linewidth=2)  # in encoder frame
+        plt.plot(
+            time, trajectories[:, i].cpu().numpy() - encoder_bias[i].item(), c="tab:orange", label="Sim", linewidth=2
+        )  # in encoder frame
         plt.plot(time, real_trajectories[:, i].cpu().numpy(), label="Real", c="tab:green", linestyle="--", linewidth=2)
         plt.plot(time, target_trajectories[:, i].cpu().numpy(), c="grey", label="Target", linestyle="--", alpha=0.5)
         plt.title(f"Joint {joint_order[i]}")  # Use joint names from config

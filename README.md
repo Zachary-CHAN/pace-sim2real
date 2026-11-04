@@ -61,7 +61,7 @@ Setting joint dynamic friction coefficients are not supported in Isaac Sim < 5.0
 
 These warnings are expected and indicate that certain physics properties (e.g. joint viscous and dynamic friction) are not supported by the older simulator version. While the examples may still run, the physical fidelity and sim-to-real accuracy will be reduced.
 
-✅ Recommended: Isaac Sim 5.0 or newer  
+✅ Recommended: Isaac Sim 5.0 or newer
 ⚠️ Legacy support: May run with limitations on < 5.0
 
 ---
@@ -232,7 +232,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute.
 
 If you use **PACE Sim2Real** in your research, please cite our [paper](https://doi.org/10.1177/02783649261459628) published in **The International Journal of Robotics Research (IJRR)**. An open-access version is available on [arXiv](https://arxiv.org/abs/2509.06342).
 
-> F. Bjelonic, F. Tischhauser, and M. Hutter,  
+> F. Bjelonic, F. Tischhauser, and M. Hutter,
 > _Towards Bridging the Gap: Systematic Sim-to-Real Transfer for Diverse Legged Robots_, The International Journal of Robotics Research, 2026. [doi:10.1177/02783649261459628](https://doi.org/10.1177/02783649261459628)
 
 ```bibtex

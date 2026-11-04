@@ -29,21 +29,49 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
-import torch
-
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
-from torch import pi
-
 import pace_sim2real.tasks  # noqa: F401
+import torch
+from isaaclab_tasks.utils import parse_env_cfg
 from pace_sim2real.utils import project_root
+from pace_sim2real.utils.excitation import (
+    generate_excitation_trajectory,
+    get_excitation_parameters,
+    validate_initial_position,
+)
+
+
+def lock_unidentified_joints(articulation, identified_joint_ids: torch.Tensor, env_ids: torch.Tensor) -> None:
+    """Lock joints outside the identification set at their configured default positions."""
+    all_joint_ids = torch.arange(articulation.num_joints, device=articulation.device)
+    identified_mask = torch.zeros(articulation.num_joints, dtype=torch.bool, device=articulation.device)
+    identified_mask[identified_joint_ids] = True
+    locked_joint_ids = all_joint_ids[~identified_mask]
+
+    if locked_joint_ids.numel() == 0:
+        return
+
+    locked_positions = articulation.data.default_joint_pos[:, locked_joint_ids].clone()
+    locked_limits = torch.stack((locked_positions, locked_positions), dim=-1)
+    articulation.write_joint_position_limit_to_sim(
+        locked_limits,
+        joint_ids=locked_joint_ids,
+        env_ids=env_ids,
+    )
+    articulation.write_joint_position_to_sim(locked_positions, joint_ids=locked_joint_ids, env_ids=env_ids)
+    articulation.write_joint_velocity_to_sim(
+        torch.zeros_like(locked_positions),
+        joint_ids=locked_joint_ids,
+        env_ids=env_ids,
+    )
+
+    locked_joint_names = [articulation.joint_names[index] for index in locked_joint_ids.cpu().tolist()]
+    print(f"[INFO]: Locked {len(locked_joint_names)} non-identified joints: {locked_joint_names}")
 
 
 def main():
     # parse configuration
-    env_cfg = parse_env_cfg(
-        args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs
-    )
+    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
     # create environment
     env = gym.make(args_cli.task, cfg=env_cfg)
 
@@ -55,70 +83,79 @@ def main():
     articulation = env.unwrapped.scene["robot"]
 
     joint_order = env_cfg.sim2real.joint_order
-    joint_ids = torch.tensor([articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device)
+    joint_ids = torch.tensor(
+        [articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device
+    )
 
-    armature = torch.tensor([0.1] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
+    # Keep the synthetic ground-truth value inside the R1 search bound [1e-6, 0.02].
+    armature = torch.tensor([0.01] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
     damping = torch.tensor([4.5] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
-    friction = torch.tensor([0.05] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)  # static friction
+    friction = torch.tensor([0.05] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
     dynamic_friction = 0.5 * friction  # dynamic friction (must not exceed static friction)
-    bias = torch.tensor([0.05] * 12, device=env.unwrapped.device).unsqueeze(0)
+    bias = torch.full((1, len(joint_ids)), 0.05, device=env.unwrapped.device)
     time_lag = torch.tensor([[5]], dtype=torch.int, device=env.unwrapped.device)
     env.reset()
 
-    articulation.write_joint_armature_to_sim(armature, joint_ids=joint_ids, env_ids=torch.arange(len(armature)))
+    env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
+    lock_unidentified_joints(articulation, joint_ids, env_ids)
+
+    articulation.write_joint_armature_to_sim(armature, joint_ids=joint_ids, env_ids=env_ids)
     articulation.data.default_joint_armature[:, joint_ids] = armature
-    articulation.write_joint_viscous_friction_coefficient_to_sim(damping, joint_ids=joint_ids, env_ids=torch.arange(len(damping)))
+    articulation.write_joint_viscous_friction_coefficient_to_sim(damping, joint_ids=joint_ids, env_ids=env_ids)
     articulation.data.default_joint_viscous_friction_coeff[:, joint_ids] = damping
-    # note: modeling pure coulomb friction if joint_friction = joint_dynamic_friction
-    articulation.write_joint_friction_coefficient_to_sim(friction, joint_ids=joint_ids, env_ids=torch.tensor([0]))
+    # Static and dynamic friction are intentionally different in this synthetic ground truth.
+    articulation.write_joint_friction_coefficient_to_sim(friction, joint_ids=joint_ids, env_ids=env_ids)
     articulation.data.default_joint_friction_coeff[:, joint_ids] = friction
-    articulation.write_joint_dynamic_friction_coefficient_to_sim(dynamic_friction, joint_ids=joint_ids, env_ids=torch.tensor([0]))
+    articulation.write_joint_dynamic_friction_coefficient_to_sim(dynamic_friction, joint_ids=joint_ids, env_ids=env_ids)
     articulation.data.default_joint_dynamic_friction_coeff[:, joint_ids] = dynamic_friction
     drive_types = articulation.actuators.keys()
     for drive_type in drive_types:
         drive_indices = articulation.actuators[drive_type].joint_indices
         if isinstance(drive_indices, slice):
-            all_idx = torch.arange(joint_ids.shape[0], device=joint_ids.device)
+            all_idx = torch.arange(articulation.num_joints, device=joint_ids.device)
             drive_indices = all_idx[drive_indices]
-        comparison_matrix = (joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0))
+
+        # Only configure actuator groups whose complete set of joints is part
+        # of this identification task. For R1 this selects legs and feet while
+        # leaving trunk and arms untouched.
+        identified_mask = torch.isin(drive_indices, joint_ids)
+        if not torch.any(identified_mask):
+            continue
+        if not torch.all(identified_mask):
+            raise ValueError(
+                f"Actuator group '{drive_type}' is only partially covered by joint_order. "
+                "Split the actuator group or include all of its joints."
+            )
+        comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
         drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
         articulation.actuators[drive_type].update_time_lags(time_lag)
         articulation.actuators[drive_type].update_encoder_bias(bias[:, drive_joint_idx])
-        articulation.actuators[drive_type].reset(torch.arange(env.unwrapped.num_envs))
+        articulation.actuators[drive_type].reset(env_ids)
 
     data_dir = project_root() / "data" / env_cfg.sim2real.robot_name
 
-    # Create a chirp signal for each action dimension
-
     duration = args_cli.duration  # seconds
     sample_rate = 1 / env.unwrapped.sim.get_physics_dt()  # Hz
-    num_steps = int(duration * sample_rate)
-    t = torch.linspace(0, duration, steps=num_steps, device=env.unwrapped.device)
-    f0 = args_cli.min_frequency  # Hz
-    f1 = args_cli.max_frequency  # Hz
-
-    # Linear chirp: phase = 2*pi*(f0*t + (f1-f0)/(2*duration)*t^2)
-    phase = 2 * pi * (f0 * t + ((f1 - f0) / (2 * duration)) * t ** 2)
-    chirp_signal = torch.sin(phase)
-
-    trajectory = torch.zeros((num_steps, len(joint_ids)), device=env.unwrapped.device)
-    trajectory[:, :] = chirp_signal.unsqueeze(-1)
-    trajectory_directions = torch.tensor(
-        [1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
-        device=env.unwrapped.device
+    trajectory_center, trajectory_amplitude, trajectory_phase_offset = get_excitation_parameters(
+        env_cfg.sim2real, len(joint_ids), env.unwrapped.device
     )
-    trajectory_bias = torch.tensor(
-        [0.0, 0.4, 0.8] * 4,
-        device=env.unwrapped.device
+    t, trajectory = generate_excitation_trajectory(
+        duration=duration,
+        sample_rate=sample_rate,
+        min_frequency=args_cli.min_frequency,
+        max_frequency=args_cli.max_frequency,
+        center=trajectory_center,
+        amplitude=trajectory_amplitude,
+        phase_offset=trajectory_phase_offset,
     )
-    trajectory_scale = torch.tensor(
-        [0.25, 0.5, -2.0] * 4,
-        device=env.unwrapped.device
-    )
-    trajectory[:, joint_ids] = (trajectory[:, joint_ids] + trajectory_bias.unsqueeze(0)) * trajectory_directions.unsqueeze(0) * trajectory_scale.unsqueeze(0)
+    num_steps = t.shape[0]
+    if hasattr(env_cfg.sim2real, "trajectory_center"):
+        validate_initial_position(trajectory, articulation.data.default_joint_pos[0, joint_ids])
 
-    articulation.write_joint_position_to_sim(trajectory[0, :].unsqueeze(0) + bias[0, joint_ids])
-    articulation.write_joint_velocity_to_sim(torch.zeros((1, len(joint_ids)), device=env.unwrapped.device))
+    articulation.write_joint_position_to_sim(trajectory[0, :].unsqueeze(0) + bias, joint_ids=joint_ids)
+    articulation.write_joint_velocity_to_sim(
+        torch.zeros((1, len(joint_ids)), device=env.unwrapped.device), joint_ids=joint_ids
+    )
 
     counter = 0
     # simulate environment
@@ -129,12 +166,16 @@ def main():
         # run everything in inference mode
         with torch.inference_mode():
             # compute actions
-            dof_pos_buffer[counter, :] = env.unwrapped.scene.articulations["robot"].data.joint_pos[0, joint_ids] - bias[0]
-            actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
-            actions = trajectory[counter % num_steps, :].unsqueeze(0).repeat(env.unwrapped.num_envs, 1)
+            dof_pos_buffer[counter, :] = (
+                env.unwrapped.scene.articulations["robot"].data.joint_pos[0, joint_ids] - bias[0]
+            )
+            actions = articulation.data.default_joint_pos.clone()
+            actions[:, joint_ids] = trajectory[counter % num_steps, :].unsqueeze(0).repeat(env.unwrapped.num_envs, 1)
             # apply actions
             obs, _, _, _, _ = env.step(actions)
-            dof_target_pos_buffer[counter, :] = env.unwrapped.scene.articulations["robot"]._data.joint_pos_target[0, joint_ids]
+            dof_target_pos_buffer[counter, :] = env.unwrapped.scene.articulations["robot"]._data.joint_pos_target[
+                0, joint_ids
+            ]
             counter += 1
             if counter % 400 == 0:
                 print(f"[INFO]: Step {counter/sample_rate} seconds")
@@ -145,28 +186,41 @@ def main():
     env.close()
 
     from time import sleep
+
     sleep(1)  # wait a bit for everything to settle
 
     (data_dir).mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "time": time_data.cpu(),
-        "dof_pos": dof_pos_buffer.cpu(),
-        "des_dof_pos": dof_target_pos_buffer.cpu(),
-    }, data_dir / "chirp_data.pt")
+    torch.save(
+        {
+            "time": time_data.cpu(),
+            "dof_pos": dof_pos_buffer.cpu(),
+            "des_dof_pos": dof_target_pos_buffer.cpu(),
+            "joint_order": joint_order,
+            "control_dt": env.unwrapped.sim.get_physics_dt(),
+        },
+        data_dir / "chirp_data.pt",
+    )
 
     import matplotlib.pyplot as plt
 
     for i in range(len(joint_ids)):
         plt.figure()
         plt.plot(t.cpu().numpy(), dof_pos_buffer[:, i].cpu().numpy(), label=f"{joint_order[i]} pos")
-        plt.plot(t.cpu().numpy(), dof_target_pos_buffer[:, i].cpu().numpy(), label=f"{joint_order[i]} target", linestyle='dashed')
+        plt.plot(
+            t.cpu().numpy(),
+            dof_target_pos_buffer[:, i].cpu().numpy(),
+            label=f"{joint_order[i]} target",
+            linestyle="dashed",
+        )
         plt.title(f"Joint {joint_order[i]} Trajectory")
         plt.xlabel("Time [s]")
         plt.ylabel("Joint position [rad]")
         plt.grid()
         plt.legend()
         plt.tight_layout()
-        plt.show()
+
+    # Create every joint figure first, then display all windows together.
+    plt.show()
 
 
 if __name__ == "__main__":

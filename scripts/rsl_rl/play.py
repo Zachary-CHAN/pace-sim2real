@@ -54,13 +54,14 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import gymnasium as gym
 import os
 import time
+
+import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
+import pace_sim2real.tasks  # noqa: F401
 import torch
-
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
+from isaaclab.devices import Se2Gamepad, Se2GamepadCfg
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -71,23 +72,16 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-
 from isaaclab_rl.rsl_rl import (
-    RslRlBaseRunnerCfg,
     RslRlDistillationRunnerCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlVecEnvWrapper,
     export_policy_as_jit,
     export_policy_as_onnx,
 )
-
-from isaaclab.devices import Se2Gamepad, Se2GamepadCfg
-
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
-
-import pace_sim2real.tasks  # noqa: F401
+from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -101,7 +95,9 @@ def main(
     train_task_name = task_name.replace("-Play", "")
 
     # override configurations with non-hydra CLI arguments
-    agent_cfg = cast(RslRlOnPolicyRunnerCfg | RslRlDistillationRunnerCfg, cli_args.update_rsl_rl_cfg(agent_cfg, args_cli))
+    agent_cfg = cast(
+        RslRlOnPolicyRunnerCfg | RslRlDistillationRunnerCfg, cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    )
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
 
     # set the environment seed
@@ -200,7 +196,9 @@ def main(
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
-            obs["policy"][robot_ref, 9:12] = gamepad.advance() * torch.tensor([1.0, -1.0, -1.0], device=env.unwrapped.device)
+            obs["policy"][robot_ref, 9:12] = gamepad.advance() * torch.tensor(
+                [1.0, -1.0, -1.0], device=env.unwrapped.device
+            )
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)

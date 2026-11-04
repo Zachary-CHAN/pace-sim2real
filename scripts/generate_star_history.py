@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import contextlib
 import json
 import math
 import os
@@ -25,10 +26,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 DEFAULT_API_VERSION = "2026-03-10"
 DEFAULT_WIDTH = 1200
@@ -49,9 +51,7 @@ class StarPoint:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Fetch or load GitHub stargazer timestamps and generate JSON + SVG."
-    )
+    parser = argparse.ArgumentParser(description="Fetch or load GitHub stargazer timestamps and generate JSON + SVG.")
     parser.add_argument(
         "--repository",
         default=os.environ.get("GITHUB_REPOSITORY"),
@@ -102,22 +102,15 @@ def parse_iso_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"Invalid date {value!r}; expected YYYY-MM-DD."
-        ) from exc
+        raise argparse.ArgumentTypeError(f"Invalid date {value!r}; expected YYYY-MM-DD.") from exc
 
 
 def validate_repository(repository: str | None) -> str:
     if not repository:
-        raise StarHistoryError(
-            "No repository specified. Pass --repository OWNER/REPO or set "
-            "GITHUB_REPOSITORY."
-        )
+        raise StarHistoryError("No repository specified. Pass --repository OWNER/REPO or set GITHUB_REPOSITORY.")
     parts = repository.strip().split("/")
     if len(parts) != 2 or not all(parts):
-        raise StarHistoryError(
-            f"Invalid repository {repository!r}; expected exactly OWNER/REPO."
-        )
+        raise StarHistoryError(f"Invalid repository {repository!r}; expected exactly OWNER/REPO.")
     return f"{parts[0]}/{parts[1]}"
 
 
@@ -166,9 +159,7 @@ def github_request_json(url: str, token: str, api_version: str) -> tuple[Any, di
         raise StarHistoryError("GitHub returned a non-JSON response.") from exc
 
 
-def fetch_stargazer_timestamps(
-    repository: str, token: str, api_version: str
-) -> list[datetime]:
+def fetch_stargazer_timestamps(repository: str, token: str, api_version: str) -> list[datetime]:
     owner, repo = repository.split("/", 1)
     owner_q = urllib.parse.quote(owner, safe="")
     repo_q = urllib.parse.quote(repo, safe="")
@@ -177,15 +168,10 @@ def fetch_stargazer_timestamps(
     page = 1
 
     while True:
-        url = (
-            f"https://api.github.com/repos/{owner_q}/{repo_q}/stargazers"
-            f"?per_page=100&page={page}"
-        )
+        url = f"https://api.github.com/repos/{owner_q}/{repo_q}/stargazers?per_page=100&page={page}"
         payload, _headers = github_request_json(url, token, api_version)
         if not isinstance(payload, list):
-            raise StarHistoryError(
-                "Unexpected GitHub response: expected a list of stargazers."
-            )
+            raise StarHistoryError("Unexpected GitHub response: expected a list of stargazers.")
 
         for entry in payload:
             if not isinstance(entry, dict) or "starred_at" not in entry:
@@ -266,13 +252,10 @@ def extract_normalized_points(payload: Any) -> list[StarPoint] | None:
     return points
 
 
-def build_points_from_timestamps(
-    timestamps: Sequence[datetime], as_of: date
-) -> list[StarPoint]:
+def build_points_from_timestamps(timestamps: Sequence[datetime], as_of: date) -> list[StarPoint]:
     if timestamps and timestamps[-1].date() > as_of:
         raise StarHistoryError(
-            f"--as-of {as_of.isoformat()} precedes the latest star "
-            f"({timestamps[-1].date().isoformat()})."
+            f"--as-of {as_of.isoformat()} precedes the latest star ({timestamps[-1].date().isoformat()})."
         )
 
     if not timestamps:
@@ -298,8 +281,7 @@ def extend_points_to_as_of(points: list[StarPoint], as_of: date) -> list[StarPoi
         return [StarPoint(day=as_of, count=0)]
     if points[-1].day > as_of:
         raise StarHistoryError(
-            f"--as-of {as_of.isoformat()} precedes the final input point "
-            f"({points[-1].day.isoformat()})."
+            f"--as-of {as_of.isoformat()} precedes the final input point ({points[-1].day.isoformat()})."
         )
     if points[-1].day < as_of:
         return [*points, StarPoint(day=as_of, count=points[-1].count)]
@@ -314,10 +296,8 @@ def atomic_write_text(path: Path, content: str) -> None:
             handle.write(content)
         os.replace(temporary_name, path)
     except Exception:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
         raise
 
 
@@ -394,9 +374,7 @@ def render_svg(repository: str, points: Sequence[StarPoint], width: int, height:
     polyline = " ".join(f"{x_for(point.day):.2f},{y_for(point.count):.2f}" for point in points)
     area_path = (
         f"M {x_for(points[0].day):.2f} {margin_top + plot_height:.2f} "
-        + " ".join(
-            f"L {x_for(point.day):.2f} {y_for(point.count):.2f}" for point in points
-        )
+        + " ".join(f"L {x_for(point.day):.2f} {y_for(point.count):.2f}" for point in points)
         + f" L {x_for(points[-1].day):.2f} {margin_top + plot_height:.2f} Z"
     )
 
@@ -405,8 +383,7 @@ def render_svg(repository: str, points: Sequence[StarPoint], width: int, height:
         value = round(axis_max * index / 5)
         y = y_for(value)
         y_grid.append(
-            f'<line class="grid" x1="{margin_left}" y1="{y:.2f}" '
-            f'x2="{margin_left + plot_width}" y2="{y:.2f}" />'
+            f'<line class="grid" x1="{margin_left}" y1="{y:.2f}" x2="{margin_left + plot_width}" y2="{y:.2f}" />'
         )
         y_grid.append(
             f'<text class="tick ytick" x="{margin_left - 18}" y="{y + 5:.2f}">'
@@ -426,11 +403,9 @@ def render_svg(repository: str, points: Sequence[StarPoint], width: int, height:
         )
 
     repo_label = html.escape(repository)
-    subtitle = (
-        f"{total:,} star" if total == 1 else f"{total:,} stars"
-    ) + f" · through {end_day.strftime('%d %b %Y')}"
+    subtitle = (f"{total:,} star" if total == 1 else f"{total:,} stars") + f" · through {end_day.strftime('%d %b %Y')}"
 
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title description">
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title description">
   <title id="title">{repo_label} star history</title>
   <desc id="description">Cumulative GitHub stars over time. Current total: {total}.</desc>
   <style>
@@ -467,7 +442,7 @@ def render_svg(repository: str, points: Sequence[StarPoint], width: int, height:
   <circle class="endpoint" cx="{x_for(points[-1].day):.2f}" cy="{y_for(total):.2f}" r="7" />
   <text class="subtitle" x="{margin_left}" y="{height - 22}">{html.escape(subtitle)}</text>
 </svg>
-'''
+"""
 
 
 def main() -> int:
@@ -495,8 +470,7 @@ def main() -> int:
             token = os.environ.get(args.token_env)
             if not token:
                 raise StarHistoryError(
-                    f"Environment variable {args.token_env!r} is not set. "
-                    "Use --input for local fixture mode."
+                    f"Environment variable {args.token_env!r} is not set. Use --input for local fixture mode."
                 )
             timestamps = fetch_stargazer_timestamps(repository, token, args.api_version)
             points = build_points_from_timestamps(timestamps, args.as_of)
@@ -516,10 +490,7 @@ def main() -> int:
         atomic_write_text(args.output_json, json_text)
         atomic_write_text(args.output_svg, svg_text)
 
-        print(
-            f"Generated {args.output_json} and {args.output_svg} "
-            f"for {repository} ({points[-1].count} stars)."
-        )
+        print(f"Generated {args.output_json} and {args.output_svg} for {repository} ({points[-1].count} stars).")
         return 0
 
     except StarHistoryError as exc:

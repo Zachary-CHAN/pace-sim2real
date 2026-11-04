@@ -106,7 +106,7 @@ This utility visualises the optimized trajectory and/or the evolution of the sco
 python scripts/pace/plot_trajectory.py \
   --folder_name 24_03_12_14-32-10 \
   --robot_name anymal_d_sim \
-  --plot_trajectory 
+  --plot_trajectory
 ```
 
 ---
